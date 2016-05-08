@@ -34,6 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "IO.h"
+#include "IOFunctions.h"
 #include "InspectorsImpl.h"
 
 // For logging
@@ -53,6 +54,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifdef WIN32
 #define strtok_r strtok_s
 #endif // WIN32
+
+namespace PointMatcherSupport {
+	namespace {
+		const int one = 1;
+	}
+	const bool isBigEndian = *reinterpret_cast<const unsigned char*>(&one) == static_cast<unsigned char>(0);
+	const int oneBigEndian = isBigEndian ? 1 : 1 << 8 * (sizeof(int) - 1);
+}
 
 using namespace std;
 using namespace PointMatcherSupport;
@@ -155,7 +164,7 @@ CsvElements parseCsvWithHeader(const std::string& fileName)
 
 //! Constructor, leave fields blank if unused
 template<typename T>
-PointMatcherIO<T>::FileInfo::FileInfo(const std::string& readingFileName, const std::string& referenceFileName, const std::string& configFileName, const TransformationParameters& initialTransformation, const TransformationParameters& groundTruthTransformation, const Vector& grativity):
+PointMatcherIO<T>::FileInfo::FileInfo(const std::string& readingFileName, const std::string& referenceFileName, const std::string& configFileName, const TransformationParameters& initialTransformation, const TransformationParameters& groundTruthTransformation, const Vector& gravity):
 	readingFileName(readingFileName),
 	referenceFileName(referenceFileName),
 	configFileName(configFileName),
@@ -417,6 +426,7 @@ PointMatcherIO<T>::SupportedLabel::SupportedLabel(const std::string& internalNam
 template<typename T>
 typename PointMatcherIO<T>::SublabelAssociationMap PointMatcherIO<T>::getFeatAssocationMap()
 {
+	// FIXME: this should be depreciated and replace by SupportedLabel
 	const SublabelAssociationMap assoc_map = boost::assign::map_list_of
 			("x", LabelAssociationPair(0,"x"))
 			("y", LabelAssociationPair(1,"y"))
@@ -428,6 +438,7 @@ typename PointMatcherIO<T>::SublabelAssociationMap PointMatcherIO<T>::getFeatAss
 template<typename T>
 typename PointMatcherIO<T>::SublabelAssociationMap PointMatcherIO<T>::getDescAssocationMap()
 {
+	// FIXME: this should be depreciated and replace by SupportedLabel
 	const SublabelAssociationMap assoc_map = boost::assign::map_list_of
 			("nx", LabelAssociationPair(0,"normals"))
 			("ny", LabelAssociationPair(1,"normals"))
@@ -870,26 +881,30 @@ PointMatcher<double>::DataPoints PointMatcherIO<double>::loadCSV(const std::stri
 
 //! Save a point cloud to a file, determine format from extension
 template<typename T>
-void PointMatcher<T>::DataPoints::save(const std::string& fileName) const
+void PointMatcher<T>::DataPoints::save(const std::string& fileName, bool binary) const
 {
 	const boost::filesystem::path path(fileName);
 	const string& ext(boost::filesystem::extension(path));
 	if (boost::iequals(ext, ".vtk"))
-		return PointMatcherIO<T>::saveVTK(*this, fileName);
-	else if (boost::iequals(ext, ".csv"))
+		return PointMatcherIO<T>::saveVTK(*this, fileName, binary);
+
+	if (binary)
+		throw runtime_error("save(): Binary writing is not supported together with extension \"" + ext + "\". Currently binary writing is only supported with \".vtk\".");
+
+	if (boost::iequals(ext, ".csv"))
 		return PointMatcherIO<T>::saveCSV(*this, fileName);
 	else if (boost::iequals(ext, ".ply"))
 		return PointMatcherIO<T>::savePLY(*this, fileName);
 	else if (boost::iequals(ext, ".pcd"))
 		return PointMatcherIO<T>::savePCD(*this, fileName);
 	else
-		throw runtime_error("saveAnyFormat(): Unknown extension \"" + ext + "\" for file \"" + fileName + "\", extension must be either \".vtk\" or \".csv\"");
+		throw runtime_error("save(): Unknown extension \"" + ext + "\" for file \"" + fileName + "\", extension must be either \".vtk\", \".ply\", \".pcd\" or \".csv\"");
 }
 
 template
-void PointMatcher<float>::DataPoints::save(const std::string& fileName) const;
+void PointMatcher<float>::DataPoints::save(const std::string& fileName, bool binary) const;
 template
-void PointMatcher<double>::DataPoints::save(const std::string& fileName) const;
+void PointMatcher<double>::DataPoints::save(const std::string& fileName, bool binary) const;
 
 //! Save point cloud to a file as CSV
 template<typename T>
@@ -975,6 +990,28 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(const std::strin
 	return loadVTK(ifs);
 }
 
+void skipBlock(bool binary, int binarySize, std::istream & is, bool hasSeparateSizeParameter = true){
+	int n;
+	int size;
+	is >> n;
+	if(hasSeparateSizeParameter) {
+		is >> size;
+	} else {
+		size = n;
+	}
+
+	std::string line;
+	getline(is, line); // remove line end after parameters;
+	if(binary){
+		is.seekg(size * binarySize, std::ios_base::cur);
+	} else {
+		for (int p = 0; p < n; p++)
+		{
+			getline(is, line);
+		}
+	}
+}
+
 //! Load point cloud from a stream as VTK
 template<typename T>
 typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is)
@@ -991,8 +1028,13 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is
 		throw runtime_error(string("Wrong magic header, found ") + line);
 	getline(is, line);
 	getline(is, line);
-	if (line != "ASCII")
-		throw runtime_error(string("Wrong file type, expecting ASCII, found ") + line);
+
+	const bool isBinary = (line == "BINARY");
+	if (line != "ASCII"){
+		if(!isBinary){
+			throw runtime_error(string("Wrong file type, expecting ASCII or BINARY, found ") + line);
+		}
+	}
 	getline(is, line);
 
 	SupportedVTKDataTypes dataType;
@@ -1007,6 +1049,7 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is
 	// parse points and descriptors
 	string fieldName;
 	string name;
+	int dim = 0;
 	int pointCount = 0;
 	string type;
 	while (is.good())
@@ -1018,16 +1061,15 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is
 		{
 			is >> pointCount;
 			is >> type;
-			
+			getline(is, line); // remove line end after parameters!
+
 			if(!(type == "float" || type == "double"))
 					throw runtime_error(string("Field POINTS can only be of type double or float"));
 
 			Matrix features(4, pointCount);
 			for (int p = 0; p < pointCount; ++p)
 			{
-				is >> features(0, p);
-				is >> features(1, p);
-				is >> features(2, p);
+				readVtkData(type, isBinary, features.template block<3, 1>(0, p), is);
 				features(3, p) = 1.0;
 			}
 			loadedPoints.addFeature("x", features.row(0));
@@ -1041,86 +1083,32 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is
 		// POLYDATA
 		else if(dataType == POLYDATA && fieldName == "VERTICES")
 		{
-			int size;
-			int verticeSize;
-			is >> size >> verticeSize;
-			// Skip vertice definition
-			for (int p = 0; p < size; p++)
-			{
-				getline(is, line); 
-				if(line == "")
-					p--;
-			}
+			skipBlock(isBinary, 4, is);
 		}
 
 		else if(dataType == POLYDATA && fieldName == "LINES")
 		{
-			int size;
-			int lineSize;
-			is >> size >> lineSize;
-			// Skip line definition
-			for (int p = 0; p < size; p++)
-			{
-				getline(is, line);
-				if(line == "")
-					p--;
-			}
+			skipBlock(isBinary, 4, is);
 		}
 
 		else if(dataType == POLYDATA && fieldName == "POLYGONS")
 		{
-			int size;
-			int polySize;
-			is >> size >> polySize;
-			// Skip line definition
-			for (int p = 0; p < size; p++)
-			{
-				getline(is, line);
-				if(line == "")
-					p--;
-			}
+			skipBlock(isBinary, 4, is);
 		}
 
 		else if(dataType == POLYDATA && fieldName == "TRIANGLE_STRIPS")
 		{
-			int size;
-			int stripSize;
-			is >> size >> stripSize;
-			// Skip line definition
-			for (int p = 0; p < size; p++)
-			{
-				getline(is, line);
-				if(line == "")
-					p--;
-			}
+			skipBlock(isBinary, 4, is);
 		}
 
 		// Unstructure Grid
 		else if(dataType == UNSTRUCTURED_GRID && fieldName == "CELLS")
 		{
-			int size;
-			int cellSize;
-			is >> size >> cellSize;
-			// Skip line definition
-			for (int p = 0; p < size; p++)
-			{
-				getline(is, line);
-				if(line == "")
-					p--;
-			}
+			skipBlock(isBinary, 4, is);
 		}
 		else if(dataType == UNSTRUCTURED_GRID && fieldName == "CELL_TYPES")
 		{
-			int size;
-			int cellSize;
-			is >> size >> cellSize;
-			// Skip line definition
-			for (int p = 0; p < size; p++)
-			{
-				getline(is, line);
-				if(line == "")
-					p--;
-			}
+			skipBlock(isBinary, 4, is, false); // according to http://www.vtk.org/VTK/img/file-formats.pdf CELL_TYPES only has one parameter (n)
 		}
 
 		//////////////////////////////////////////////////////////
@@ -1143,15 +1131,28 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is
 			for (int f = 0; f < fieldDataCount; f++)
 			{
 				//getline(is, line);
-				string fieldDataArrayName, fieldDataArrayType;
-				int numComponents, numTuples;
-				is >> fieldDataArrayName >> numComponents >> numTuples >> fieldDataArrayType;
+				int numTuples;
+				is >> name >> dim >> numTuples >> type;
 
-				int t_val;
-				for (int t = 0; t < numComponents * numTuples; t++ )
+				if(type == "vtkIdType") // skip that type
 				{
-					is >> t_val;
+					if(isBinary){
+						is.seekg(dim * numTuples * 4, std::ios_base::cur);
+					} else {
+						int t_val;
+						for (int t = 0; t < dim * numTuples; t++ )
+						{
+							is >> t_val;
+						}
+					}
 				}
+				else if(!(type == "float" || type == "double"))
+						throw runtime_error(string("Field " + fieldName + " is " + type + " but can only be of type double or float"));
+						 
+
+				Matrix descriptor(dim, pointCount);
+				readVtkData(type, isBinary, descriptor.transpose(), is);
+				loadedPoints.addDescriptor(name, descriptor);
 			}
 		}
 		else // Load descriptors
@@ -1159,8 +1160,8 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is
 			// descriptor name
 			is >> name;
 
-			int dim = 0;
 			bool skipLookupTable = false;
+			bool isColorScalars = false;
 			if(fieldName == "SCALARS")
 			{
 				dim = 1;
@@ -1186,33 +1187,36 @@ typename PointMatcher<T>::DataPoints PointMatcherIO<T>::loadVTK(std::istream& is
 			{
 				is >> dim;
 				type = "float";
+				isColorScalars = true;
 			}
 			else
 				throw runtime_error(string("Unknown field name " + fieldName + ", expecting SCALARS, VECTORS, TENSORS, NORMALS or COLOR_SCALARS."));
 
 			
-			if(!(type == "float" || type == "double"))
-					throw runtime_error(string("Field " + fieldName + " is " + type + " but can only be of type double or float"));
-					 
-			// Skip LOOKUP_TABLE line
-			if(skipLookupTable)
-			{
-				//FIXME: FP - why the first line is aways empty?
-				getline(is, line); 
-				getline(is, line); 
-			}
+			getline(is, line); // remove rest of the parameter line including its line end;
 
 			Matrix descriptor(dim, pointCount);
-			for (int p = 0; p < pointCount; ++p)
-			{
-				for(int d = 0; d < dim; d++)
-				{
-					is >> descriptor(d, p);
+			if(isColorScalars && isBinary) {
+				std::vector<unsigned char> buffer(dim);
+				for (int i = 0; i < pointCount; ++i){
+					is.read(reinterpret_cast<char *>(&buffer.front()), dim);
+					for(int r=0; r < dim; ++r){
+						descriptor(r, i) = buffer[r] / static_cast<T>(255.0);
+					}
 				}
+			} else {
+				if(!(type == "float" || type == "double"))
+						throw runtime_error(string("Field " + fieldName + " is " + type + " but can only be of type double or float"));
+
+				// Skip LOOKUP_TABLE line
+				if(skipLookupTable)
+				{
+					getline(is, line);
+				}
+				readVtkData(type, isBinary, descriptor.transpose(), is);
 			}
 			loadedPoints.addDescriptor(name, descriptor);
 		}
-			 
 	}
 	
 	return loadedPoints;
@@ -1226,21 +1230,22 @@ PointMatcherIO<double>::DataPoints PointMatcherIO<double>::loadVTK(const std::st
 
 //! Save point cloud to a file as VTK
 template<typename T>
-void PointMatcherIO<T>::saveVTK(const DataPoints& data, const std::string& fileName)
+void PointMatcherIO<T>::saveVTK(const DataPoints& data, const std::string& fileName, bool binary)
 {
 	typedef typename InspectorsImpl<T>::VTKFileInspector VTKInspector;
 	
 	Parametrizable::Parameters param;
 	boost::assign::insert(param) ("baseFileName", "");
+	boost::assign::insert(param) ("writeBinary", toParam(binary));
 	VTKInspector vtkInspector(param);
 	vtkInspector.dumpDataPoints(data, fileName);
 }
 
 
 template
-void PointMatcherIO<float>::saveVTK(const PointMatcherIO<float>::DataPoints& data, const std::string& fileName);
+void PointMatcherIO<float>::saveVTK(const PointMatcherIO<float>::DataPoints& data, const std::string& fileName, bool binary);
 template
-void PointMatcherIO<double>::saveVTK(const PointMatcher<double>::DataPoints& data, const std::string& fileName);
+void PointMatcherIO<double>::saveVTK(const PointMatcher<double>::DataPoints& data, const std::string& fileName, bool binary);
 
 //! @brief Load polygon file format (ply) file
 //! @param fileName a string containing the path and the file name
@@ -1998,21 +2003,28 @@ typename PointMatcherIO<T>::DataPoints PointMatcherIO<T>::loadPCD(std::istream& 
 			map<int, LabelAssociationPair> colToDescPair_ = colToDescPair;
 			colToDescPair.clear();
 
+
 			vector<int>::const_iterator nextFieldToKeepIt = descFieldsToKeep.begin();
+
 			for (size_t i = 1; i < tokens.size(); i++)
 			{
 				int count = boost::lexical_cast<int>(tokens[i]);
-
-				if ((int)i == *nextFieldToKeepIt)
+				
+				if(descFieldsToKeep.size() != 0)
 				{
-					string descLabel = colToDescPair_[i].second;
-					descLabelToNumRows[descLabel] = count;
+					if ((int)i == *nextFieldToKeepIt)
+					{
+						assert(colToDescPair_.find(i) != colToDescPair_.end());
 
-					for (int p = 0; p < count; p++)
-						colToDescPair[numDataFields + p] = LabelAssociationPair(p, descLabel);
+						string descLabel = colToDescPair_[i].second;
+						descLabelToNumRows[descLabel] = count;
 
-					if (nextFieldToKeepIt != descFieldsToKeep.end())
-						nextFieldToKeepIt++;
+						for (int p = 0; p < count; p++)
+							colToDescPair[numDataFields + p] = LabelAssociationPair(p, descLabel);
+
+						if (nextFieldToKeepIt != descFieldsToKeep.end())
+							nextFieldToKeepIt++;
+					}
 				}
 
 				numDataFields += count;
@@ -2097,6 +2109,7 @@ typename PointMatcherIO<T>::DataPoints PointMatcherIO<T>::loadPCD(std::istream& 
 	// allocate descriptor vectors
 	size_t numDescCols = cumSum; // number of descriptor vectors
 	Matrix descriptors(numDescCols,numPoints);
+
 
 	// Now read in the data
 	size_t p = 0; // point count

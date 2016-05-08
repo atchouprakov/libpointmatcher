@@ -73,18 +73,30 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 	
 	// now minimize on kept points
 	const int dimCount(mPts.reading.features.rows());
-	const int ptsCount(mPts.reading.features.cols()); //But point cloud have now the same number of (matched) point
+	//const int ptsCount(mPts.reading.features.cols()); //Both point clouds have now the same number of (matched) point
 
-	// Compute the mean of each point cloud
-	const Vector meanReading = mPts.reading.features.rowwise().sum() / ptsCount;
-	const Vector meanReference = mPts.reference.features.rowwise().sum() / ptsCount;
+	// Compute the (weighted) mean of each point cloud
+	const Vector& w = mPts.weights;
+	const T w_sum_inv = T(1.)/w.sum();
 	
+// FIXME: remove those statements onces the multiplication with rowwise() is more spread on OS
+#if EIGEN_MAJOR_VERSION > 0 
+	const Vector meanReading =
+		(mPts.reading.features.topRows(dimCount-1).array().rowwise() * w.array().transpose()).rowwise().sum() * w_sum_inv;
+	const Vector meanReference =
+		(mPts.reference.features.topRows(dimCount-1).array().rowwise() * w.array().transpose()).rowwise().sum() * w_sum_inv;
+#else
+	const Vector meanReading = mPts.reading.features.topRows(dimCount-1).cwiseProduct(w.replicate(dimCount-1, 1)).rowwise().sum() * w_sum_inv;
+	const Vector meanReference = mPts.reference.features.topRows(dimCount-1).cwiseProduct(w.replicate(dimCount-1, 1)).rowwise().sum() * w_sum_inv;
+#endif
+
 	// Remove the mean from the point clouds
-	mPts.reading.features.colwise() -= meanReading;
-	mPts.reference.features.colwise() -= meanReference;
+	mPts.reading.features.topRows(dimCount-1).colwise() -= meanReading;
+	mPts.reference.features.topRows(dimCount-1).colwise() -= meanReference;
 
 	// Singular Value Decomposition
-	const Matrix m(mPts.reference.features.topRows(dimCount-1) * mPts.reading.features.topRows(dimCount-1).transpose());
+	const Matrix m(mPts.reference.features.topRows(dimCount-1) * w.asDiagonal()
+			* mPts.reading.features.topRows(dimCount-1).transpose());
 	const JacobiSVD<Matrix> svd(m, ComputeThinU | ComputeThinV);
 	Matrix rotMatrix(svd.matrixU() * svd.matrixV().transpose());
 	// It is possible to get a reflection instead of a rotation. In this case, we
@@ -97,7 +109,7 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 		tmpV.row(dimCount-2) *= -1.;
 		rotMatrix = svd.matrixU() * tmpV;
 	}
-	const Vector trVector(meanReference.head(dimCount-1)- rotMatrix * meanReading.head(dimCount-1));
+	const Vector trVector(meanReference - rotMatrix * meanReading);
 	
 	Matrix result(Matrix::Identity(dimCount, dimCount));
 	result.topLeftCorner(dimCount-1, dimCount-1) = rotMatrix;
@@ -145,6 +157,110 @@ T ErrorMinimizersImpl<T>::PointToPointErrorMinimizer::getOverlap() const
 template struct ErrorMinimizersImpl<float>::PointToPointErrorMinimizer;
 template struct ErrorMinimizersImpl<double>::PointToPointErrorMinimizer;
 
+// Point To POINT ErrorMinimizer with similarity, solve for rotation + translation + scale
+template<typename T>
+typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::PointToPointSimilarityErrorMinimizer::compute(
+	const DataPoints& filteredReading,
+	const DataPoints& filteredReference,
+	const OutlierWeights& outlierWeights,
+	const Matches& matches)
+{	
+	assert(matches.ids.rows() > 0);
+
+	typename ErrorMinimizer::ErrorElements& mPts = this->getMatchedPoints(filteredReading, filteredReference, matches, outlierWeights);
+	
+	// now minimize on kept points
+	const int dimCount(mPts.reading.features.rows());
+	//const int ptsCount(mPts.reading.features.cols()); //Both point clouds have now the same number of (matched) point
+
+	// Compute the (weighted) mean of each point cloud
+	const Vector& w = mPts.weights;
+	const T w_sum_inv = T(1.)/w.sum();
+	
+// FIXME: remove those statements onces the multiplication with rowwise() is more spread on OS
+#if EIGEN_MAJOR_VERSION > 0 
+	const Vector meanReading =
+		(mPts.reading.features.topRows(dimCount-1).array().rowwise() * w.array().transpose()).rowwise().sum() * w_sum_inv;
+	const Vector meanReference =
+		(mPts.reference.features.topRows(dimCount-1).array().rowwise() * w.array().transpose()).rowwise().sum() * w_sum_inv;
+#else
+	const Vector meanReading = mPts.reading.features.topRows(dimCount-1).cwiseProduct(w.replicate(dimCount-1, 1)).rowwise().sum() * w_sum_inv;
+	const Vector meanReference = mPts.reference.features.topRows(dimCount-1).cwiseProduct(w.replicate(dimCount-1, 1)).rowwise().sum() * w_sum_inv;
+#endif
+
+	// Remove the mean from the point clouds
+	mPts.reading.features.topRows(dimCount-1).colwise() -= meanReading;
+	mPts.reference.features.topRows(dimCount-1).colwise() -= meanReference;
+
+	const T sigma = mPts.reading.features.topRows(dimCount-1).colwise().squaredNorm().cwiseProduct(w.transpose()).sum();
+
+	// Singular Value Decomposition
+	const Matrix m(mPts.reference.features.topRows(dimCount-1) * w.asDiagonal()
+			* mPts.reading.features.topRows(dimCount-1).transpose());
+	const JacobiSVD<Matrix> svd(m, ComputeThinU | ComputeThinV);
+	Matrix rotMatrix(svd.matrixU() * svd.matrixV().transpose());
+	typedef typename JacobiSVD<Matrix>::SingularValuesType SingularValuesType;
+	SingularValuesType singularValues = svd.singularValues();
+	// It is possible to get a reflection instead of a rotation. In this case, we
+	// take the second best solution, guaranteed to be a rotation. For more details,
+	// read the tech report: "Least-Squares Rigid Motion Using SVD", Olga Sorkine
+	// http://igl.ethz.ch/projects/ARAP/svd_rot.pdf
+	if (rotMatrix.determinant() < 0.)
+	{
+		Matrix tmpV = svd.matrixV().transpose();
+		tmpV.row(dimCount-2) *= -1.;
+		rotMatrix = svd.matrixU() * tmpV;
+		singularValues(dimCount-2) *= -1.;
+	}
+	T scale = singularValues.sum() / sigma;
+	if (sigma < 0.0001) scale = T(1);
+	const Vector trVector(meanReference - scale * rotMatrix * meanReading);
+	
+	Matrix result(Matrix::Identity(dimCount, dimCount));
+	result.topLeftCorner(dimCount-1, dimCount-1) = scale * rotMatrix;
+	result.topRightCorner(dimCount-1, 1) = trVector;
+	
+	return result;
+}
+
+template<typename T>
+T ErrorMinimizersImpl<T>::PointToPointSimilarityErrorMinimizer::getOverlap() const
+{
+	//NOTE: computing overlap of 2 point clouds can be complicated due to
+	// the sparse nature of the representation. Here is only an estimate 
+	// of the true overlap.
+	const int nbPoints = this->lastErrorElements.reading.features.cols();
+	const int dim = this->lastErrorElements.reading.features.rows();
+	if(nbPoints == 0)
+	{
+		throw std::runtime_error("Error, last error element empty. Error minimizer needs to be called at least once before using this method.");
+	}
+
+	if (!this->lastErrorElements.reading.descriptorExists("simpleSensorNoise"))
+	{
+		LOG_INFO_STREAM("PointToPointSimilarityErrorMinimizer - warning, no sensor noise found. Using best estimate given outlier rejection instead.");
+		return this->weightedPointUsedRatio;
+	}
+
+	const BOOST_AUTO(noises, this->lastErrorElements.reading.getDescriptorViewByName("simpleSensorNoise"));
+
+	const Vector dists = (this->lastErrorElements.reading.features.topRows(dim-1) - this->lastErrorElements.reference.features.topRows(dim-1)).colwise().norm();
+	const T mean = dists.sum()/nbPoints;
+
+	int count = 0;
+	for(int i=0; i < nbPoints; i++)
+	{
+		if(dists(i) < (mean + noises(0,i)))
+		{
+			count++;
+		}
+	}
+
+	return (T)count/(T)nbPoints;
+}
+
+template struct ErrorMinimizersImpl<float>::PointToPointSimilarityErrorMinimizer;
+template struct ErrorMinimizersImpl<double>::PointToPointSimilarityErrorMinimizer;
 
 // Point To PLANE ErrorMinimizer
 template<typename T>
@@ -154,6 +270,52 @@ ErrorMinimizersImpl<T>::PointToPlaneErrorMinimizer::PointToPlaneErrorMinimizer(c
 {
 }
 
+
+template<typename T, typename MatrixA, typename Vector>
+void solvePossiblyUnderdeterminedLinearSystem(const MatrixA& A, const Vector & b, Vector & x) {
+	assert(A.cols() == A.rows());
+	assert(b.cols() == 1);
+	assert(b.rows() == A.rows());
+	assert(x.cols() == 1);
+	assert(x.rows() == A.cols());
+
+	typedef typename PointMatcher<T>::Matrix Matrix;
+
+	BOOST_AUTO(Aqr, A.fullPivHouseholderQr());
+	if (!Aqr.isInvertible())
+	{
+		// Solve reduced problem R1 x = Q1^T b instead of QR x = b, where Q = [Q1 Q2] and R = [ R1 ; R2 ] such that ||R2|| is small (or zero) and therefore A = QR ~= Q1 * R1
+		const int rank = Aqr.rank();
+		const int rows = A.rows();
+		const Matrix Q1t = Aqr.matrixQ().transpose().block(0, 0, rank, rows);
+
+		const bool findMinimalNormSolution = true; // TODO is that what we want?
+
+		// The under-determined system R1 x = Q1^T b is made unique ..
+		if(findMinimalNormSolution){
+			// by getting the solution of smallest norm (x = R1^T * (R1 * R1^T)^-1 Q1^T b.
+			const Matrix R1 = (Q1t * A * Aqr.colsPermutation()).block(0, 0, rank, rows);
+
+			x = R1.template triangularView<Eigen::Upper>().transpose() * (R1 * R1.transpose()).llt().solve(Q1t * b);
+		} else {
+			// by solving the simplest problem that yields fewest nonzero components in x
+			const Matrix R1 = (Q1t * A * Aqr.colsPermutation()).block(0, 0, rank, rank);
+
+			x.block(0, 0, rank, 1) = R1.template triangularView<Eigen::Upper>().solve(Q1t * b);
+			x.block(rank, 0, rows - rank, 1).setZero();
+		}
+
+		x = Aqr.colsPermutation() * x;
+
+		if(!b.isApprox(A * x)){
+			throw typename PointMatcher<T>::ConvergenceError("encountered singular while minimizing point to plane distance and the current workaround wasn't successful");
+		}
+	}
+	else {
+		// Cholesky decomposition
+		x = A.llt().solve(b);
+	}
+}
 
 template<typename T>
 typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::PointToPlaneErrorMinimizer::compute(
@@ -208,17 +370,12 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 
 	// Unadjust covariance A = wF * F'
 	const Matrix A = wF * F.transpose();
-	if (A.fullPivHouseholderQr().rank() != A.rows())
-	{
-		// TODO: handle that properly
-		//throw ConvergenceError("encountered singular while minimizing point to plane distance");
-	}
 
 	const Matrix deltas = mPts.reading.features - mPts.reference.features;
 
 	// dot product of dot = dot(deltas, normals)
 	Matrix dotProd = Matrix::Zero(1, normalRef.cols());
-	
+
 	for(int i=0; i<normalRef.rows(); i++)
 	{
 		dotProd += (deltas.row(i).array() * normalRef.row(i).array()).matrix();
@@ -227,10 +384,10 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 	// b = -(wF' * dot)
 	const Vector b = -(wF * dotProd.transpose());
 
-	// Cholesky decomposition
 	Vector x(A.rows());
-	x = A.llt().solve(b);
-	
+
+	solvePossiblyUnderdeterminedLinearSystem<T>(A, b, x);
+
 	// Transform parameters to matrix
 	Matrix mOut;
 	if(dim == 4 && !force2D)
@@ -283,42 +440,100 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 template<typename T>
 T ErrorMinimizersImpl<T>::PointToPlaneErrorMinimizer::getOverlap() const
 {
+
+	// Gather some information on what kind of point cloud we have
+	const bool hasReadingNoise = this->lastErrorElements.reading.descriptorExists("simpleSensorNoise");
+	const bool hasReferenceNoise = this->lastErrorElements.reference.descriptorExists("simpleSensorNoise");
+	const bool hasReferenceDensity = this->lastErrorElements.reference.descriptorExists("densities");
+
 	const int nbPoints = this->lastErrorElements.reading.features.cols();
 	const int dim = this->lastErrorElements.reading.features.rows();
+
+	// basix safety check
 	if(nbPoints == 0)
 	{
 		throw std::runtime_error("Error, last error element empty. Error minimizer needs to be called at least once before using this method.");
 	}
 	
-	if (!this->lastErrorElements.reading.descriptorExists("simpleSensorNoise") ||
-		!this->lastErrorElements.reading.descriptorExists("normals"))
+	Eigen::Array<T, 1, Eigen::Dynamic>  uncertainties(nbPoints);
+
+	// optimal case
+	if (hasReadingNoise && hasReferenceNoise && hasReferenceDensity)
 	{
-		LOG_INFO_STREAM("PointToPlaneErrorMinimizer - warning, no sensor noise or normals found. Using best estimate given outlier rejection instead.");
+		// find median density
+		
+		Matrix densities = this->lastErrorElements.reference.getDescriptorViewByName("densities");
+		vector<T> values(densities.data(), densities.data() + densities.size());
+
+		// sort up to half the values
+		nth_element(values.begin(), values.begin() + (values.size() * 0.5), values.end());
+
+		// extract median value
+		const T medianDensity = values[values.size() * 0.5];
+		const T medianRadius = 1.0/pow(medianDensity, 1/3.0);
+
+		uncertainties = (medianRadius +
+						this->lastErrorElements.reading.getDescriptorViewByName("simpleSensorNoise").array() +
+						this->lastErrorElements.reference.getDescriptorViewByName("simpleSensorNoise").array());
+	}
+	else if(hasReadingNoise && hasReferenceNoise)
+	{
+		uncertainties = this->lastErrorElements.reading.getDescriptorViewByName("simpleSensorNoise") +
+						this->lastErrorElements.reference.getDescriptorViewByName("simpleSensorNoise");
+	}
+	else if(hasReadingNoise)
+	{
+		uncertainties = this->lastErrorElements.reading.getDescriptorViewByName("simpleSensorNoise");
+	}
+	else if(hasReferenceNoise)
+	{
+		uncertainties = this->lastErrorElements.reference.getDescriptorViewByName("simpleSensorNoise");
+	}
+	else
+	{
+		LOG_INFO_STREAM("PointToPlaneErrorMinimizer - warning, no sensor noise and density. Using best estimate given outlier rejection instead.");
 		return this->weightedPointUsedRatio;
 	}
 
-	const BOOST_AUTO(noises, this->lastErrorElements.reading.getDescriptorViewByName("simpleSensorNoise"));
-	const BOOST_AUTO(normals, this->lastErrorElements.reading.getDescriptorViewByName("normals"));
-	
 
-	const Matrix delta = (this->lastErrorElements.reading.features.topRows(dim-1) - this->lastErrorElements.reference.features.topRows(dim-1));
-	const T mean = delta.colwise().norm().sum()/nbPoints;
-	cerr << "mean:" << mean << endl;
+	const Vector dists = (this->lastErrorElements.reading.features.topRows(dim-1) - this->lastErrorElements.reference.features.topRows(dim-1)).colwise().norm();
 
+
+	// here we can only loop through a list of links, but we are interested in whether or not
+	// a point has at least one valid match.
 	int count = 0;
+	int nbUniquePoint = 1;
+	Vector lastValidPoint = this->lastErrorElements.reading.features.col(0) * 2.;
 	for(int i=0; i < nbPoints; i++)
 	{
-		const Vector n = normals.col(i);
-		const T projectionDist = delta.col(i).dot(n.normalized());
-		if(anyabs(projectionDist) < (mean + noises(0,i)))
+		const Vector point = this->lastErrorElements.reading.features.col(i);
+
+		if(lastValidPoint != point)
 		{
-			count++;
+			// NOTE: we tried with the projected distance over the normal vector before:
+			// projectionDist = delta dotProduct n.normalized()
+			// but this doesn't make sense 
+
+
+			if(anyabs(dists(i, 0)) < (uncertainties(0,i)))
+			{
+				lastValidPoint = point;
+				count++;
+			}
 		}
+		
+		// Count unique points
+		if(i > 0)
+		{
+			if(point != this->lastErrorElements.reading.features.col(i-1))
+				nbUniquePoint++;
+		}
+
 	}
+	//cout << "count: " << count << ", nbUniquePoint: " << nbUniquePoint << ", this->lastErrorElements.nbRejectedPoints: " << this->lastErrorElements.nbRejectedPoints << endl;
 
-	return (T)count/(T)nbPoints;
+	return (T)count/(T)(nbUniquePoint + this->lastErrorElements.nbRejectedPoints);
 }
-
 template struct ErrorMinimizersImpl<float>::PointToPlaneErrorMinimizer;
 template struct ErrorMinimizersImpl<double>::PointToPlaneErrorMinimizer;
 
@@ -345,7 +560,7 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 	
 	// now minimize on kept points
 	const int dimCount(mPts.reading.features.rows());
-	const int ptsCount(mPts.reading.features.cols()); //But point cloud have now the same number of (matched) point
+	const int ptsCount(mPts.reading.features.cols()); //Both point cloud have now the same number of (matched) point
 
 	// Compute the mean of each point cloud
 	const Vector meanReading = mPts.reading.features.rowwise().sum() / ptsCount;
@@ -467,7 +682,7 @@ T ErrorMinimizersImpl<T>::PointToPointWithCovErrorMinimizer::getOverlap() const
 
 	if (!this->lastErrorElements.reading.descriptorExists("simpleSensorNoise"))
 	{
-		LOG_INFO_STREAM("PointToPointErrorMinimizer - warning, no sensor noise found. Using best estimate given outlier rejection instead.");
+		LOG_INFO_STREAM("PointToPointWithCovErrorMinimizer - warning, no sensor noise found. Using best estimate given outlier rejection instead.");
 		return this->weightedPointUsedRatio;
 	}
 
@@ -502,7 +717,6 @@ ErrorMinimizersImpl<T>::PointToPlaneWithCovErrorMinimizer::PointToPlaneWithCovEr
 	sensorStdDev(Parametrizable::get<T>("sensorStdDev"))
 {
 }
-
 
 template<typename T>
 typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::PointToPlaneWithCovErrorMinimizer::compute(
@@ -557,11 +771,6 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 
 	// Unadjust covariance A = wF * F'
 	const Matrix A = wF * F.transpose();
-	if (A.fullPivHouseholderQr().rank() != A.rows())
-	{
-		// TODO: handle that properly
-		//throw ConvergenceError("encountered singular while minimizing point to plane distance");
-	}
 
 	const Matrix deltas = mPts.reading.features - mPts.reference.features;
 
@@ -576,10 +785,10 @@ typename PointMatcher<T>::TransformationParameters ErrorMinimizersImpl<T>::Point
 	// b = -(wF' * dot)
 	const Vector b = -(wF * dotProd.transpose());
 
-	// Cholesky decomposition
 	Vector x(A.rows());
-	x = A.llt().solve(b);
 	
+	solvePossiblyUnderdeterminedLinearSystem<T>(A, b, x);
+
 	// Transform parameters to matrix
 	Matrix mOut;
 	if(dim == 4 && !force2D)

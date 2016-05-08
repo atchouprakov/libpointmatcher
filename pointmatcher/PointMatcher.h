@@ -40,6 +40,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define EIGEN_USE_NEW_STDVECTOR
 #endif // EIGEN_USE_NEW_STDVECTOR
 //#define EIGEN2_SUPPORT
+
+//TODO: investigate if that causes more problems down the road
+#define EIGEN_NO_DEBUG
+
 #include "Eigen/StdVector"
 #include "Eigen/Core"
 #include "Eigen/Geometry"
@@ -171,7 +175,7 @@ struct PointMatcher
 	typedef typename Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> Matrix;
 	//! A dense integer matrix
 	typedef typename Eigen::Matrix<int, Eigen::Dynamic, Eigen::Dynamic> IntMatrix;
-	//! A dense unsigned 64-bits matrix
+	//! A dense signed 64-bits matrix
 	typedef typename Eigen::Matrix<boost::int64_t, Eigen::Dynamic, Eigen::Dynamic> Int64Matrix;
 	
 	//! A matrix holding the parameters a transformation.
@@ -259,7 +263,7 @@ struct PointMatcher
 		unsigned getDescriptorDim() const;
 		unsigned getTimeDim() const;
 
-		void save(const std::string& fileName) const;
+		void save(const std::string& fileName, bool binary = false) const;
 		static DataPoints load(const std::string& fileName);
 		
 		void concatenate(const DataPoints& dp);
@@ -513,6 +517,8 @@ struct PointMatcher
 			DataPoints reference; //!< reference point cloud
 			OutlierWeights weights; //!< weights for every association
 			Matches matches; //!< associations
+			int nbRejectedMatches; //!< number of matches with zero weights
+			int nbRejectedPoints; //!< number of points with all matches set to zero weights
 
 			ErrorElements(const DataPoints& reading=DataPoints(), const DataPoints reference = DataPoints(), const OutlierWeights weights = OutlierWeights(), const Matches matches = Matches());
 		};
@@ -663,8 +669,8 @@ struct PointMatcher
 		template<typename R>
         const std::string& createModuleFromRegistrar(const std::string& regName, const PointMatcherSupport::YAML::Node& doc, const R& registrar, boost::shared_ptr<typename R::TargetType>& module);
 		
-		/*template<typename R>
-		typename R::TargetType* createModuleFromRegistrar(const PointMatcherSupport::YAML::Node& module, const R& registrar);*/
+		//! Get the value of a field in a node
+        std::string nodeVal(const std::string& regName, const PointMatcherSupport::YAML::Node& doc);
 	};
 	
 	//! ICP algorithm
