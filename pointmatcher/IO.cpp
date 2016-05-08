@@ -1253,7 +1253,7 @@ void PointMatcherIO<double>::saveVTK(const PointMatcher<double>::DataPoints& dat
 template<typename T>
 typename PointMatcherIO<T>::DataPoints PointMatcherIO<T>::loadPLY(const std::string& fileName)
 {
-	ifstream ifs(fileName.c_str());
+	ifstream ifs(fileName.c_str(),ios::binary);
 	if (!ifs.good())
 		throw runtime_error(string("Cannot open file ") + fileName);
 	return loadPLY(ifs);
@@ -1269,6 +1269,7 @@ PointMatcherIO<double>::DataPoints PointMatcherIO<double>::loadPLY(const string&
 template <typename T>
 typename PointMatcherIO<T>::DataPoints PointMatcherIO<T>::loadPLY(std::istream& is)
 {
+    bool binary = false;
 	//TODO: adapt following loadCSV()
 	typedef vector<PLYElement*> Elements;
 
@@ -1336,11 +1337,11 @@ typename PointMatcherIO<T>::DataPoints PointMatcherIO<T>::loadPLY(std::istream& 
 			string format_str, version_str;
 			stringstream >> format_str >> version_str;
 
-			if (format_str != "ascii" && format_str != "binary_little_endian" && format_str != "binary_big_endian")
+			if (format_str != "ascii" && format_str != "binary_little_endian")
 				throw runtime_error(string("PLY parse error: format <") + format_str + string("> is not supported"));
-
-			if (format_str == "binary_little_endian" || format_str == "binary_big_endian")
-				throw runtime_error(string("PLY parse error: binary PLY files are not supported"));
+			 
+            if (format_str == "binary_little_endian")
+                binary = true;
 			if (version_str != "1.0")
 			{
 				throw runtime_error(string("PLY parse error: version <") + version_str + string("> of ply is not supported"));
@@ -1515,46 +1516,94 @@ typename PointMatcherIO<T>::DataPoints PointMatcherIO<T>::loadPLY(std::istream& 
 
 	///////////////////////////
 	// 4- PARSE PLY DATA (vertex)
-	const int nbProp = vertex->total_props;
-	const int nbValues = nbPoints*nbProp;
-	int propID = 0;
-	int col = 0;
-	for(int i=0; i<nbValues; i++)
-	{
-		T value;
-		if(!(is >> value))
-		{
-			throw runtime_error(
-			(boost::format("PLY parse error: expected %1% values (%2% points with %3% properties) but only found %4% values.") % nbValues % nbPoints % nbProp % i).str());
-		}
-		else
-		{
-			const int row = vertex->properties[propID].pmRowID;
-			const PMPropTypes type = vertex->properties[propID].pmType;
-			
-			if (vertex->properties[propID].name == "red" || vertex->properties[propID].name == "green" || vertex->properties[propID].name == "blue" || vertex->properties[propID].name == "alpha") {
-				value /= 255.0;
-			}
+    if (!binary)
+    {
 
-			if(type == FEATURE)
-			{
-				features(row, col) = value;
-			}
-			else if(type == DESCRIPTOR)
-			{
-				descriptors(row, col) = value;
-			}
+        const int nbProp = vertex->total_props;
+        const int nbValues = nbPoints*nbProp;
+        int propID = 0;
+        int col = 0;
+        for (int i = 0; i < nbValues; i++)
+        {
+            T value;
+            if (!(is >> value))
+            {
+                throw runtime_error(
+                    (boost::format("PLY parse error: expected %1% values (%2% points with %3% properties) but only found %4% values.") % nbValues % nbPoints % nbProp % i).str());
+            }
+            else
+            {
+                const int row = vertex->properties[propID].pmRowID;
+                const PMPropTypes type = vertex->properties[propID].pmType;
 
-			++propID;
+                if (vertex->properties[propID].name == "red" || vertex->properties[propID].name == "green" || vertex->properties[propID].name == "blue" || vertex->properties[propID].name == "alpha")
+                {
+                    value /= 255.0;
+                }
 
-			if(propID >= nbProp)
-			{
-				propID = 0;
-				++col;
-			}
-		}
-	}
+                if (type == FEATURE)
+                {
+                    features(row, col) = value;
+                }
+                else if (type == DESCRIPTOR)
+                {
+                    descriptors(row, col) = value;
+                }
 
+                ++propID;
+
+                if (propID >= nbProp)
+                {
+                    propID = 0;
+                    ++col;
+                }
+            }
+        }
+    }
+    else
+    {
+        const int nbProp = vertex->total_props;
+        const int nbValues = nbPoints*nbProp;
+        int propID = 0;
+        int col = 0;
+        for (int i = 0; i < nbValues; i++)
+        {
+            T value;
+            
+            if (!(is.read((char*)(&value), sizeof(T)) ))
+            {
+                throw runtime_error(
+                    (boost::format("PLY parse error: expected %1% values (%2% points with %3% properties) but only found %4% values.") % nbValues % nbPoints % nbProp % i).str());
+            }
+            else
+            {
+                const int row = vertex->properties[propID].pmRowID;
+                const PMPropTypes type = vertex->properties[propID].pmType;
+
+                if (vertex->properties[propID].name == "red" || vertex->properties[propID].name == "green" || vertex->properties[propID].name == "blue" || vertex->properties[propID].name == "alpha")
+                {
+                    value /= 255.0;
+                }
+
+                if (type == FEATURE)
+                {
+                    features(row, col) = value;
+                }
+                else if (type == DESCRIPTOR)
+                {
+                    descriptors(row, col) = value;
+                }
+
+                ++propID;
+
+                if (propID >= nbProp)
+                {
+                    propID = 0;
+                    ++col;
+                }
+            }
+        }
+    }
 
 
 	///////////////////////////

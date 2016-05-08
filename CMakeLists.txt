@@ -7,7 +7,7 @@ project(libpointmatcher)
 # Extract version from header
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 execute_process(
-	COMMAND grep "POINTMATCHER_VERSION " pointmatcher/PointMatcher.h
+	COMMAND "C:/Program Files (x86)/GnuWin32/bin/grep.exe" "POINTMATCHER_VERSION " pointmatcher/PointMatcher.h
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	RESULT_VARIABLE GREP_VERSION_RESULT
 	OUTPUT_VARIABLE PROJECT_VERSION

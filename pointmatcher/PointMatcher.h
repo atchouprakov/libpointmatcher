@@ -212,7 +212,7 @@ struct PointMatcher
 		//! A view on a const feature or const descriptor
 		typedef const Eigen::Block<const Matrix> ConstView;
 		//! a view on a const time
-		typedef const Eigen::Block<const Int64Matrix> TimeConstView;
+		typedef typename const Eigen::Block<const Int64Matrix> TimeConstView;
 		//! An index to a row or a column
 		typedef typename Matrix::Index Index;
 		
@@ -305,7 +305,7 @@ struct PointMatcher
 		void addTime(const std::string& name, const Int64Matrix& newTime);
 		void removeTime(const std::string& name);
 		Int64Matrix getTimeCopyByName(const std::string& name) const;
-		TimeConstView getTimeViewByName(const std::string& name) const;
+		typename PointMatcher<T>::DataPoints::TimeConstView getTimeViewByName(const std::string& name) const;
 		TimeView getTimeViewByName(const std::string& name);
 		TimeConstView getTimeRowViewByName(const std::string& name, const unsigned row) const;
 		TimeView getTimeRowViewByName(const std::string& name, const unsigned row);
