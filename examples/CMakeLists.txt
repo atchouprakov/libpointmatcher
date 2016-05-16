@@ -1,3 +1,5 @@
+include_directories(${Boost_INCLUDE_DIRS}
+        ${EIGEN3_INCLUDE_DIR})
 add_executable(pmicp icp.cpp)
 target_link_libraries(pmicp pointmatcher)
 install(TARGETS pmicp RUNTIME DESTINATION bin)

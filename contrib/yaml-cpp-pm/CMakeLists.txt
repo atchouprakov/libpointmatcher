@@ -1,11 +1,9 @@
+
+set(D4D_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../2015 sapphire_ws/D4DWand") 
+include("${D4D_ROOT}/1stParty/Cmake/D4DCommonConfig.cmake")
+
+project (yaml-cpp-pm VERSION 0.3.0)
 include(CheckCXXCompilerFlag)
-
-set(YAML_CPP_VERSION_MAJOR "0")
-set(YAML_CPP_VERSION_MINOR "3")
-set(YAML_CPP_VERSION_PATCH "0")
-set(YAML_CPP_VERSION "${YAML_CPP_VERSION_MAJOR}.${YAML_CPP_VERSION_MINOR}.${YAML_CPP_VERSION_PATCH}")
-
-enable_testing()
 
 
 ###
@@ -36,8 +34,7 @@ file(GLOB private_headers "src/[a-zA-Z]*.h")
 
 add_definitions(-DYAML_CPP_NO_CONTRIB)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 ###
 ### General compilation settings
 ###
@@ -53,59 +50,14 @@ if(APPLE)
 	endif()
 endif()
 
-if(WIN32)
-	if(BUILD_SHARED_LIBS)
-		add_definitions(-D${PROJECT_NAME}_DLL)	# use or build Windows DLL
-	endif()
-	if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-		set(CMAKE_INSTALL_PREFIX "C:/")
-	endif()
-endif()
 
-# GCC specialities
-if(CMAKE_COMPILER_IS_GNUCXX)
-	### General stuff
-	if(WIN32)
-		set(CMAKE_SHARED_LIBRARY_PREFIX "")	# DLLs do not have a "lib" prefix
-		set(CMAKE_IMPORT_LIBRARY_PREFIX "")	# same for DLL import libs
-		set(CMAKE_LINK_DEF_FILE_FLAG "")	# CMake workaround (2.8.3)
-	endif()
 
-	### Project stuff
-	if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
-		set(CMAKE_BUILD_TYPE Release)
-	endif()
-	#
-	set(CMAKE_CXX_FLAGS_RELEASE "-O2")
-	set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g")
-	set(CMAKE_CXX_FLAGS_DEBUG "-g")
-	set(CMAKE_CXX_FLAGS_MINSIZEREL "-Os")
-	#
-	set(GCC_EXTRA_OPTIONS "")
-	#
-	set(FLAG_TESTED "-Wextra")
-	check_cxx_compiler_flag(${FLAG_TESTED} FLAG_WEXTRA)
-	if(FLAG_WEXTRA)
-		set(GCC_EXTRA_OPTIONS "${GCC_EXTRA_OPTIONS} ${FLAG_TESTED}")
-	endif()
-	#
-	set(CMAKE_CXX_FLAGS "-Wall ${GCC_EXTRA_OPTIONS} -fPIC -pedantic -Wno-long-long ${CMAKE_CXX_FLAGS}")
-	#
-	add_custom_target(debuggable $(MAKE) clean
-		COMMAND ${CMAKE_COMMAND} -DCMAKE_BUILD_TYPE=Debug ${CMAKE_SOURCE_DIR}
-		COMMENT "Adjusting settings for debug compilation"
-		VERBATIM)
-	add_custom_target(releasable $(MAKE) clean
-		COMMAND ${CMAKE_COMMAND} -DCMAKE_BUILD_TYPE=Release ${CMAKE_SOURCE_DIR}
-		COMMENT "Adjusting settings for release compilation"
-		VERBATIM)
-endif()
 
 
 ###
 ### Library
 ###
-add_library(yaml-cpp-pm
+add_library(${PROJECT_NAME}
 	${sources}
 	${public_headers}
 	${private_headers}
@@ -114,9 +66,27 @@ add_library(yaml-cpp-pm
 	${contrib_private_headers}
 )
 
-set_target_properties(yaml-cpp-pm PROPERTIES
-	VERSION "${YAML_CPP_VERSION}"
-	SOVERSION "${YAML_CPP_VERSION_MAJOR}.${YAML_CPP_VERSION_MINOR}"
-	PROJECT_LABEL "yaml-cpp ${LABEL_SUFFIX}"
+target_include_directories(${PROJECT_NAME}
+				PRIVATE
+			${CMAKE_CURRENT_SOURCE_DIR}/include  
+			   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+
+install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets
+    LIBRARY DESTINATION lib/\@CMAKE_INSTALL_CONFIG_NAME@ COMPONENT Devel
+    ARCHIVE DESTINATION lib/\@CMAKE_INSTALL_CONFIG_NAME@ COMPONENT Devel
+    RUNTIME DESTINATION bin/\@CMAKE_INSTALL_CONFIG_NAME@ COMPONENT Devel
+    PUBLIC_HEADER DESTINATION include/${PROJECT_NAME} COMPONENT Devel #since it is a static lib, it is only installed as a develepment component
+    INCLUDES DESTINATION include/${PROJECT_NAME}
 )
+
+#install(TARGETS ${PROJECT_NAME}  EXPORT  ${PROJECT_NAME}Targets 
+#		ARCHIVE DESTINATION ${INSTALL_LIB_DIR}
+#		INCLUDES DESTINATION include/${PROJECT_NAME})
+
+include(D4DCreateProjectConfig)
+D4D_create_project_config()
+
+
+
 
