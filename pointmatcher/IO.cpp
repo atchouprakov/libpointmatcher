@@ -1573,38 +1573,80 @@ typename PointMatcherIO<T>::DataPoints PointMatcherIO<T>::loadPLY(std::istream& 
         int col = 0;
         for (int i = 0; i < nbValues; i++)
         {
-            T value;
-            
-            if (!(is.read((char*)(&value), sizeof(T)) ))
+         
+
+            if (vertex->properties[propID].name == "red" || vertex->properties[propID].name == "green" || vertex->properties[propID].name == "blue" || vertex->properties[propID].name == "alpha")
             {
-                throw runtime_error(
-                    (boost::format("PLY parse error: expected %1% values (%2% points with %3% properties) but only found %4% values.") % nbValues % nbPoints % nbProp % i).str());
+                unsigned char value;
+
+                if (!(is.read((char*)(&value), sizeof(value))))
+                {
+                    throw runtime_error(
+                        (boost::format("PLY parse error: expected %1% values (%2% points with %3% properties) but only found %4% values.") % nbValues % nbPoints % nbProp % i).str());
+                }
+                else
+                {
+                    const int row = vertex->properties[propID].pmRowID;
+                    const PMPropTypes type = vertex->properties[propID].pmType;
+
+                    if (vertex->properties[propID].name == "red" || vertex->properties[propID].name == "green" || vertex->properties[propID].name == "blue" || vertex->properties[propID].name == "alpha")
+                    {
+                        value /= 255.0;
+                    }
+
+                    if (type == FEATURE)
+                    {
+                        features(row, col) = value;
+                    }
+                    else if (type == DESCRIPTOR)
+                    {
+                        descriptors(row, col) = value;
+                    }
+
+                    ++propID;
+
+                    if (propID >= nbProp)
+                    {
+                        propID = 0;
+                        ++col;
+                    }
+                }
             }
             else
             {
-                const int row = vertex->properties[propID].pmRowID;
-                const PMPropTypes type = vertex->properties[propID].pmType;
+                T value;
 
-                if (vertex->properties[propID].name == "red" || vertex->properties[propID].name == "green" || vertex->properties[propID].name == "blue" || vertex->properties[propID].name == "alpha")
+                if (!(is.read((char*)(&value), sizeof(value))))
                 {
-                    value /= 255.0;
+                    throw runtime_error(
+                        (boost::format("PLY parse error: expected %1% values (%2% points with %3% properties) but only found %4% values.") % nbValues % nbPoints % nbProp % i).str());
                 }
-
-                if (type == FEATURE)
+                else
                 {
-                    features(row, col) = value;
-                }
-                else if (type == DESCRIPTOR)
-                {
-                    descriptors(row, col) = value;
-                }
+                    const int row = vertex->properties[propID].pmRowID;
+                    const PMPropTypes type = vertex->properties[propID].pmType;
 
-                ++propID;
+                    if (vertex->properties[propID].name == "red" || vertex->properties[propID].name == "green" || vertex->properties[propID].name == "blue" || vertex->properties[propID].name == "alpha")
+                    {
+                        value /= 255.0;
+                    }
 
-                if (propID >= nbProp)
-                {
-                    propID = 0;
-                    ++col;
+                    if (type == FEATURE)
+                    {
+                        features(row, col) = value;
+                    }
+                    else if (type == DESCRIPTOR)
+                    {
+                        descriptors(row, col) = value;
+                    }
+
+                    ++propID;
+
+                    if (propID >= nbProp)
+                    {
+                        propID = 0;
+                        ++col;
+                    }
                 }
             }
         }
