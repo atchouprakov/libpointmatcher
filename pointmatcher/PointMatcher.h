@@ -309,7 +309,7 @@ struct PointMatcher
 		void addTime(const std::string& name, const Int64Matrix& newTime);
 		void removeTime(const std::string& name);
 		Int64Matrix getTimeCopyByName(const std::string& name) const;
-		typename PointMatcher<T>::DataPoints::TimeConstView getTimeViewByName(const std::string& name) const;
+		const typename PointMatcher<T>::DataPoints::TimeConstView getTimeViewByName(const std::string& name) const;
 		TimeView getTimeViewByName(const std::string& name);
 		TimeConstView getTimeRowViewByName(const std::string& name, const unsigned row) const;
 		TimeView getTimeRowViewByName(const std::string& name, const unsigned row);
