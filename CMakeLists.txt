@@ -4,7 +4,7 @@ include (CheckSymbolExists)
 
 project(pointmatcher)
 
-set(D4D_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../2015 sapphire_ws/D4DWand") 
+set(D4D_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../D4DWand") 
 include("${D4D_ROOT}/1stParty/Cmake/D4DCommonConfig.cmake")
 
 find_package(nabo)
