@@ -1,5 +1,5 @@
 
-set(D4D_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../2015 sapphire_ws/D4DWand") 
+set(D4D_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../D4DWand") 
 include("${D4D_ROOT}/1stParty/Cmake/D4DCommonConfig.cmake")
 
 project (yaml-cpp-pm VERSION 0.3.0)
@@ -26,7 +26,6 @@ option(APPLE_UNIVERSAL_BIN "Apple: Build universal binary" OFF)
 ###
 ### Sources, headers, directories and libs
 ###
-set(header_directory "include/yaml-cpp-pm/")
 
 file(GLOB sources "src/[a-zA-Z]*.cpp")
 file(GLOB public_headers "include/yaml-cpp-pm/[a-zA-Z]*.h")
@@ -67,9 +66,12 @@ add_library(${PROJECT_NAME}
 )
 
 target_include_directories(${PROJECT_NAME}
-				PRIVATE
-			${CMAKE_CURRENT_SOURCE_DIR}/include  
-			   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+	PUBLIC
+		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> 
+	    $<INSTALL_INTERFACE:include/${PROJECT_NAME}> 
+	PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/include  
+		${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets
